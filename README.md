@@ -50,4 +50,4 @@ Copyright &#xa9; 2019 - 2024 by Wilfred Bos.
 
 ## License
 
-This project is licensed under the MIT License - see the [here](/LICENSE) file for details.
+This project is licensed under the [MIT License](/LICENSE).
