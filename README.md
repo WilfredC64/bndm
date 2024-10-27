@@ -18,7 +18,7 @@ Here is an example of how to use the library to search for a pattern in a text:
 
 ### Without wildcard
 
-```
+```rust
 use bndm::{BndmConfig, find_pattern};
 
 let source = b"The quick brown fox jumps over the lazy dog";
@@ -30,7 +30,7 @@ assert_eq!(index, Some(20));
 
 ### With wildcard
 
-```
+```rust
 use bndm::{BndmConfig, find_pattern};
 
 let source = b"The quick brown fox jumps over the lazy dog";
