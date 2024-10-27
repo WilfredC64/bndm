@@ -1,6 +1,6 @@
 [package]
 name = "bndm"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["Wilfred Bos"]
 description = "A Rust library that implements the BNDM algorithm for fast and efficient pattern matching, with support for wildcard searches."
 readme = "README.md"

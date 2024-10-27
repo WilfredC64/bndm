@@ -1,10 +1,14 @@
 # BNDM
 
+[![Latest version](https://img.shields.io/crates/v/bndm.svg)](https://crates.io/crates/bndm)
+[![Documentation](https://docs.rs/bndm/badge.svg)](https://docs.rs/bndm)
+![License](https://img.shields.io/crates/l/bndm.svg)
+
 A Rust library that implements the BNDM algorithm for fast and efficient pattern matching, with support for wildcard searches.
 
 ## Overview
 
-This library implements the BNDM (Backward Nondeterministic Dawg Matching) algorithm for pattern matching. BNDM is an optimized string search algorithm designed for efficiently locating patterns within a text. The BNDM algorithm was invented by Gonzalo Navarro and Mathieu Raffinot.
+BNDM (Backward Nondeterministic Dawg Matching) is an optimized string search algorithm designed for efficiently locating patterns within a text. The BNDM algorithm was invented by Gonzalo Navarro and Mathieu Raffinot.
 
 The BNDM algorithm works by preprocessing the pattern to generate a set of bitmasks. These bitmasks are then used to efficiently scan the text for occurrences of the pattern.
 
