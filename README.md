@@ -1,5 +1,6 @@
 # BNDM
 
+[![Rust](https://github.com/WilfredC64/bndm/actions/workflows/rust.yml/badge.svg)](https://github.com/WilfredC64/bndm/actions/workflows/rust.yml)
 [![Latest version](https://img.shields.io/crates/v/bndm.svg)](https://crates.io/crates/bndm)
 [![Documentation](https://docs.rs/bndm/badge.svg)](https://docs.rs/bndm)
 ![License](https://img.shields.io/crates/l/bndm.svg)
