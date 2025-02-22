@@ -167,7 +167,7 @@ pub fn find_pattern(source: &[u8], config: &BndmConfig) -> Option<usize> {
     match config.pattern.len() {
         0 => None,
         1 => config.wildcard
-            .map_or(false, |w| w == config.pattern[0]).then_some(0)
+            .is_some_and(|w| w == config.pattern[0]).then_some(0)
             .or_else(|| source.iter().position(|&s| s == config.pattern[0])),
         _ => find_pattern_bndm(source, config)
     }
@@ -233,7 +233,7 @@ fn get_mask(source: &[u8], config: &BndmConfig, index: usize) -> usize {
 /// * `bool` - Returns `true` if the remaining part of the pattern matches the corresponding part of the source string, `false` otherwise.
 fn find_remaining(source: &[u8], config: &BndmConfig, start_index: usize) -> bool {
     config.pattern.iter().skip(WORD_SIZE_IN_BITS).enumerate().all(|(index, &pattern_byte)| unsafe {
-        *source.get_unchecked(start_index + index) == pattern_byte || config.wildcard.map_or(false, |w| pattern_byte == w)
+        *source.get_unchecked(start_index + index) == pattern_byte || config.wildcard == Some(pattern_byte)
     })
 }
 
