@@ -1,4 +1,4 @@
-// Copyright (C) 2019 - 2024 Wilfred Bos
+// Copyright (C) 2019 - 2026 Wilfred Bos
 // Licensed under the MIT license. See the LICENSE file for the terms and conditions.
 
 //! # Backward Nondeterministic Dawg Matching (BNDM)
@@ -11,15 +11,17 @@
 //! These bitmasks are then used to efficiently scan the text for occurrences of the
 //! pattern.
 //!
-//! Unlike the traditional BNDM algorithm, this implementation is optimized by scanning the
-//! first 2 bytes outside the inner loop. Additionally, it does not have the limitation that
-//! the pattern size is limited to the word size of the CPU. It's possible to search for
-//! larger patterns than the word size and still benefit from the performance that BNDM offers.
+//! Unlike the traditional BNDM algorithm, this implementation is optimized by checking the
+//! last 2 bytes of each window before entering the inner loop. Additionally, it does not have
+//! the limitation that the pattern size is limited to the word size of the CPU. It's possible
+//! to search for larger patterns than the word size and still benefit from the performance
+//! that BNDM offers.
 //!
-//! One of the key features of this implementation is its support for wildcard search.
-//! This algorithm is ideally suited for this, as it does not impact the performance of the
-//! pattern matching itself. The wildcard search only slightly affects the indexing, ensuring
-//! that the overall efficiency of the pattern matching remains high.
+//! One of the key features of this implementation is its support for wildcard search, for
+//! which BNDM is ideally suited. Wildcards are encoded in the bitmasks during preprocessing,
+//! so the BNDM scan does exactly the same work per byte with or without wildcards. Where
+//! many other search algorithms need extra comparisons or special handling to support
+//! wildcards, the BNDM scan supports them at no additional cost per byte.
 //!
 //! ## BndmConfig
 //!
@@ -82,7 +84,7 @@ impl BndmConfig {
     ///
     /// * `search_pattern` - The pattern to search for in the text.
     /// * `wildcard` - An optional wildcard character. If provided, this character in the pattern
-    ///                can match any character in the text.
+    ///   can match any character in the text.
     ///
     /// # Returns
     ///
@@ -131,12 +133,12 @@ impl BndmConfig {
 ///
 /// * `source` - The source string to search for the pattern.
 /// * `config` - The configuration for the BNDM search, which includes the pattern and the
-///              bitmasks.
+///   bitmasks.
 ///
 /// # Returns
 ///
 /// * `Option<usize>` - Returns the index of the first occurrence of the pattern in the text,
-///                     or `None` if the pattern is not found.
+///   or `None` if the pattern is not found.
 ///
 /// # Usage
 ///
@@ -167,51 +169,66 @@ pub fn find_pattern(source: &[u8], config: &BndmConfig) -> Option<usize> {
     match config.pattern.len() {
         0 => None,
         1 => config.wildcard
-            .is_some_and(|w| w == config.pattern[0]).then_some(0)
-            .or_else(|| source.iter().position(|&s| s == config.pattern[0])),
+            .is_some_and(|w| w == config.pattern[0] && !source.is_empty()).then_some(0)
+            .or_else(|| find_byte(source, config.pattern[0])),
         _ => find_pattern_bndm(source, config)
     }
 }
 
+fn find_byte(source: &[u8], byte: u8) -> Option<usize> {
+    // Find the chunk containing the byte, then its position in that chunk or in the tail.
+    // The fold has no early exit and `as_chunks` gives it exactly 32 bytes on every iteration,
+    // which allows it to be vectorized.
+    let (chunks, tail) = source.as_chunks::<32>();
+    let i = chunks.iter().position(|chunk| {
+        chunk.iter().fold(false, |found, &b| found | (b == byte))
+    }).unwrap_or(chunks.len());
+    let chunk = chunks.get(i).map_or(tail, |chunk| chunk.as_slice());
+    chunk.iter().position(|&b| b == byte).map(|j| i * 32 + j)
+}
+
+#[inline(never)]
 fn find_pattern_bndm(source: &[u8], config: &BndmConfig) -> Option<usize> {
-    if config.pattern.len() > source.len() {
+    let pattern_len = config.pattern.len();
+    if pattern_len > source.len() {
         return None;
     }
 
-    let len = get_pattern_length_within_cpu_word(config.pattern.len()) - 1;
-    let end = source.len() - config.pattern.len();
-    let df = 1 << len;
+    let masks = &config.masks;
+    let len = get_pattern_length_within_cpu_word(pattern_len) - 1;
+    let end = source.len() - pattern_len;
+    let mask_at = |index: usize| -> usize {
+        debug_assert!(index < source.len());
+        // SAFETY: every caller uses index <= i + len, and i <= end with end + len < source.len().
+        masks[unsafe { *source.get_unchecked(index) } as usize]
+    };
+
     let mut i = 0;
-
     while i <= end {
+        let mut d = (mask_at(i + len) << 1) & mask_at(i + len - 1);
         let mut j = len;
-        let mut last = len;
 
-        let mut d = get_mask(source, config, i + j);
-        d = (d << 1) & get_mask(source, config, i + j - 1);
-        while d != 0 {
-            j -= 1;
-            if d & df != 0 {
+        if d != 0 {
+            j = len - 1;
+            loop {
                 if j == 0 {
                     if find_remaining(source, config, i + WORD_SIZE_IN_BITS) {
                         return Some(i);
                     }
-                    j += 1;
+                    j = 1;
+                    break;
                 }
-                last = j;
+                d = (d << 1) & mask_at(i + j - 1);
+                if d == 0 {
+                    break;
+                }
+                j -= 1;
             }
-            d = (d << 1) & get_mask(source, config, i + j - 1);
         }
 
-        i += last;
+        i += j;
     }
     None
-}
-
-fn get_mask(source: &[u8], config: &BndmConfig, index: usize) -> usize {
-    unsafe {
-        *config.masks.get_unchecked(*source.get_unchecked(index) as usize)
-    }
 }
 
 /// Checks if the remaining part of the pattern matches the source string.
@@ -224,17 +241,24 @@ fn get_mask(source: &[u8], config: &BndmConfig, index: usize) -> usize {
 ///
 /// * `source` - The source string to search for the pattern.
 /// * `config` - The configuration for the BNDM search, which includes the pattern and the
-///              wildcard character.
+///   wildcard character.
 /// * `start_index` - The index in the source string from where the remaining part of the
-///                   pattern should be checked.
+///   pattern should be checked.
 ///
 /// # Returns
 ///
 /// * `bool` - Returns `true` if the remaining part of the pattern matches the corresponding part of the source string, `false` otherwise.
 fn find_remaining(source: &[u8], config: &BndmConfig, start_index: usize) -> bool {
-    config.pattern.iter().skip(WORD_SIZE_IN_BITS).enumerate().all(|(index, &pattern_byte)| unsafe {
-        *source.get_unchecked(start_index + index) == pattern_byte || config.wildcard == Some(pattern_byte)
-    })
+    let Some(remaining) = config.pattern.get(WORD_SIZE_IN_BITS..) else {
+        return true;
+    };
+    let source = &source[start_index..start_index + remaining.len()];
+
+    match config.wildcard {
+        None => source == remaining,
+        Some(wildcard) => remaining.iter().zip(source)
+            .all(|(&pattern_byte, &source_byte)| pattern_byte == source_byte || pattern_byte == wildcard)
+    }
 }
 
 fn get_pattern_length_within_cpu_word(search_pattern_length: usize) -> usize {
@@ -247,11 +271,13 @@ fn calculate_wildcard_mask(search_pattern: &[u8], wildcard: Option<u8>) -> usize
 }
 
 fn generate_masks(search_pattern: &[u8], wildcard: Option<u8>) -> [usize; MASKS_TABLE_SIZE] {
-    let default_mask = calculate_wildcard_mask(search_pattern, wildcard);
-    let mut masks = [default_mask; MASKS_TABLE_SIZE];
+    let mut masks = [calculate_wildcard_mask(search_pattern, wildcard); MASKS_TABLE_SIZE];
+    let mut bit = 1usize;
 
-    search_pattern.iter().rev().enumerate()
-        .for_each(|(i, &pattern_byte)| masks[pattern_byte as usize] |= 1 << i);
+    for &byte in search_pattern.iter().rev() {
+        masks[byte as usize] |= bit;
+        bit <<= 1;
+    }
 
     masks
 }

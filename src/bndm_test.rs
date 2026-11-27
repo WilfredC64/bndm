@@ -131,6 +131,16 @@ fn find_pattern_wildcard_only() {
 }
 
 #[test]
+fn find_pattern_wildcard_only_in_empty_source() {
+    let source = b"";
+    let pattern = b"?";
+    let config = BndmConfig::new(pattern, Some(b'?'));
+    let index = find_pattern(source, &config);
+
+    assert_eq!(index, None);
+}
+
+#[test]
 fn find_pattern_wildcard_beginning_first_word() {
     let source = b"The quick brown fox jumps over the lazy dog";
     let pattern = b"??he";
@@ -568,4 +578,196 @@ fn find_small_pattern_skip_window_match_longest_suffix_long_pattern() {
     let index = find_pattern(source, &config);
 
     assert_eq!(index, Some(41));
+}
+
+#[test]
+fn find_overlapping_match_after_wildcard_tail_mismatch() {
+    let mut pattern = vec![b'a'; WORD_SIZE_IN_BITS];
+    pattern.extend_from_slice(b"?b");
+    let config = BndmConfig::new(&pattern, Some(b'?'));
+
+    let mut source = vec![b'a'; WORD_SIZE_IN_BITS + 1];
+    source.extend_from_slice(b"?b");
+
+    assert_eq!(find_pattern(&source, &config), Some(1));
+}
+
+#[test]
+fn find_single_byte_at_chunk_boundaries() {
+    // The single byte search scans in chunks of 32 bytes, the last chunk is shorter.
+    for index in [0, 1, 31, 32, 33, 63, 64, 95, 96, 99] {
+        let mut source = vec![b'a'; 100];
+        source[index] = b'b';
+        let config = BndmConfig::new(b"b", None);
+        let found = find_pattern(&source, &config);
+
+        assert_eq!(found, Some(index), "byte at index {index}");
+    }
+}
+
+#[test]
+fn find_single_byte_first_of_multiple_chunks() {
+    let mut source = vec![b'a'; 100];
+    source[40] = b'b';
+    source[70] = b'b';
+    let config = BndmConfig::new(b"b", None);
+    let index = find_pattern(&source, &config);
+
+    assert_eq!(index, Some(40));
+}
+
+#[test]
+fn find_single_byte_no_match_in_multiple_chunks() {
+    let source = vec![b'a'; 100];
+    let config = BndmConfig::new(b"b", None);
+    let index = find_pattern(&source, &config);
+
+    assert_eq!(index, None);
+}
+
+#[test]
+fn find_two_byte_pattern_in_source_of_two_bytes() {
+    let config = BndmConfig::new(b"ab", None);
+
+    assert_eq!(find_pattern(b"ab", &config), Some(0));
+    assert_eq!(find_pattern(b"ba", &config), None);
+    assert_eq!(find_pattern(b"a", &config), None);
+}
+
+#[test]
+fn find_pattern_returns_first_occurrence() {
+    let source = b"XabcXabcXabc";
+    let pattern = b"abc";
+    let config = BndmConfig::new(pattern, None);
+    let index = find_pattern(source, &config);
+
+    assert_eq!(index, Some(1));
+}
+
+#[test]
+fn find_wildcard_character_is_literal_without_wildcard() {
+    let config = BndmConfig::new(b"j?mps", None);
+    assert_eq!(find_pattern(b"The quick brown fox jumps over the lazy dog", &config), None);
+
+    let config = BndmConfig::new(b"t? y", None);
+    assert_eq!(find_pattern(b"what? yes", &config), Some(3));
+}
+
+#[test]
+fn find_binary_pattern() {
+    let source = [0x10, 0xff, 0x20, 0x00, 0xff, 0x20];
+    let pattern = [0x00, 0xff, 0x20];
+
+    let config = BndmConfig::new(&pattern, None);
+    assert_eq!(find_pattern(&source, &config), Some(3));
+
+    // With 0x00 as wildcard, the first byte matches anything.
+    let config = BndmConfig::new(&pattern, Some(0x00));
+    assert_eq!(find_pattern(&source, &config), Some(0));
+}
+
+/// Returns 64 distinct bytes, so the first CPU word of a pattern can't partially overlap itself.
+fn distinct_word() -> Vec<u8> {
+    (0x40..0x80).collect()
+}
+
+#[test]
+fn find_large_pattern_after_mismatch_in_remaining_part() {
+    // The first 64 bytes match at index 0, but the remaining part doesn't.
+    let pattern = [distinct_word(), b"tail".to_vec()].concat();
+    let source = [distinct_word(), b"tall".to_vec(), distinct_word(), b"tail".to_vec()].concat();
+    let config = BndmConfig::new(&pattern, None);
+    let index = find_pattern(&source, &config);
+
+    assert_eq!(index, Some(68));
+}
+
+#[test]
+fn find_large_pattern_with_wildcards_in_remaining_part() {
+    let pattern = [distinct_word(), b"t??l".to_vec()].concat();
+    let source = [b"xx".to_vec(), distinct_word(), b"tall".to_vec()].concat();
+    let config = BndmConfig::new(&pattern, Some(b'?'));
+    let index = find_pattern(&source, &config);
+
+    assert_eq!(index, Some(2));
+}
+
+#[test]
+fn find_large_pattern_returns_first_occurrence() {
+    let pattern = [distinct_word(), b"!".to_vec()].concat();
+    let source = [b"-".to_vec(), pattern.clone(), pattern.clone()].concat();
+    let config = BndmConfig::new(&pattern, None);
+    let index = find_pattern(&source, &config);
+
+    assert_eq!(index, Some(1));
+}
+
+#[test]
+fn find_pattern_spanning_multiple_cpu_words() {
+    let pattern: Vec<u8> = (0..200).map(|i| b'a' + (i % 26) as u8).collect();
+    let source = [b"0123456789".to_vec(), pattern.clone()].concat();
+    let config = BndmConfig::new(&pattern, None);
+    let index = find_pattern(&source, &config);
+
+    assert_eq!(index, Some(10));
+}
+
+/// Straightforward reference implementation used to verify the optimized search.
+fn find_pattern_naive(source: &[u8], pattern: &[u8], wildcard: Option<u8>) -> Option<usize> {
+    if pattern.is_empty() || pattern.len() > source.len() {
+        return None;
+    }
+    (0..=source.len() - pattern.len()).find(|&i| {
+        pattern.iter().zip(&source[i..]).all(|(&p, &s)| p == s || Some(p) == wildcard)
+    })
+}
+
+struct Rng(u64);
+
+impl Rng {
+    fn below(&mut self, n: usize) -> usize {
+        self.0 ^= self.0 << 13;
+        self.0 ^= self.0 >> 7;
+        self.0 ^= self.0 << 17;
+        (self.0 % n as u64) as usize
+    }
+}
+
+#[test]
+fn find_pattern_matches_naive_search() {
+    let mut rng = Rng(0x2545_F491_4F6C_DD1D);
+    let wildcard = b'?';
+
+    for iteration in 0..40_000 {
+        // Small alphabets cause many partial matches, which exercises all code paths.
+        let alphabet = [b"ab".as_slice(), b"abc", b"abcdefgh"][iteration % 3];
+        let source_len = rng.below(300);
+        let mut source: Vec<u8> = (0..source_len).map(|_| alphabet[rng.below(alphabet.len())]).collect();
+        let pattern_len = 1 + rng.below(140);
+        let mut pattern: Vec<u8> = if source_len >= pattern_len && rng.below(2) == 0 {
+            let start = rng.below(source_len - pattern_len + 1);
+            source[start..start + pattern_len].to_vec()
+        } else {
+            (0..pattern_len).map(|_| alphabet[rng.below(alphabet.len())]).collect()
+        };
+
+        let use_wildcard = rng.below(2) == 0;
+        if use_wildcard {
+            let count = rng.below(pattern_len.min(8) + 1);
+            (0..count).for_each(|_| pattern[rng.below(pattern_len)] = wildcard);
+            // The wildcard byte in the source must only match a wildcard in the pattern.
+            if rng.below(4) == 0 && source_len > 0 {
+                source[rng.below(source_len)] = wildcard;
+            }
+        }
+        let wildcard = use_wildcard.then_some(wildcard);
+
+        let config = BndmConfig::new(&pattern, wildcard);
+        let expected = find_pattern_naive(&source, &pattern, wildcard);
+        assert_eq!(
+            find_pattern(&source, &config), expected,
+            "source: {:?}, pattern: {:?}, wildcard: {:?}",
+            String::from_utf8_lossy(&source), String::from_utf8_lossy(&pattern), wildcard
+        );
+    }
 }

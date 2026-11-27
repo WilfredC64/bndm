@@ -1,14 +1,20 @@
 [package]
 name = "bndm"
-version = "1.0.1"
+version = "1.1.0"
 authors = ["Wilfred Bos"]
 description = "A Rust library that implements the BNDM algorithm for fast and efficient pattern matching, with support for wildcard searches."
 readme = "README.md"
-edition = "2021"
+edition = "2024"
+rust-version = "1.88"
 license = "MIT"
 repository = "https://github.com/WilfredC64/bndm"
 documentation = "https://docs.rs/bndm/"
 keywords = ["pattern-matching", "bndm", "string", "search", "wildcard"]
 categories = ["algorithms"]
 
-[dependencies]
+[dev-dependencies]
+criterion = "0.8"
+
+[[bench]]
+name = "bench_find_pattern"
+harness = false

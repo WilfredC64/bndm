@@ -13,9 +13,9 @@ BNDM (Backward Nondeterministic Dawg Matching) is an optimized string search alg
 
 The BNDM algorithm works by preprocessing the pattern to generate a set of bitmasks. These bitmasks are then used to efficiently scan the text for occurrences of the pattern.
 
-Unlike the traditional BNDM algorithm, this implementation is optimized by scanning the first 2 bytes outside the inner loop. Additionally, it does not have the limitation that the pattern size is limited to the word size of the CPU. It's possible to search for larger patterns than the word size and still benefit from the performance that BNDM offers.
+Unlike the traditional BNDM algorithm, this implementation is optimized by checking the last 2 bytes of each window before entering the inner loop. Additionally, it does not have the limitation that the pattern size is limited to the word size of the CPU. It's possible to search for larger patterns than the word size and still benefit from the performance that BNDM offers.
 
-One of the key features of this implementation is its support for wildcard search. This algorithm is ideally suited for this, as it does not impact the performance of the pattern matching itself. The wildcard search only slightly affects the indexing, ensuring that the overall efficiency of the pattern matching remains high.
+One of the key features of this implementation is its support for wildcard search, for which BNDM is ideally suited. Wildcards are encoded in the bitmasks during preprocessing, so the BNDM scan does exactly the same work per byte with or without wildcards. Where many other search algorithms need extra comparisons or special handling to support wildcards, the BNDM scan supports them at no additional cost per byte.
 
 ## Usage
 
@@ -47,7 +47,7 @@ assert_eq!(index, Some(20));
 
 ## Copyright
 
-Copyright &#xa9; 2019 - 2024 by Wilfred Bos.
+Copyright &#xa9; 2019 - 2026 by Wilfred Bos.
 
 ## License
 
